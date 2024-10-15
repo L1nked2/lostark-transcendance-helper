@@ -1,0 +1,2 @@
+# LTH
+LostArk Transcendance Helper
