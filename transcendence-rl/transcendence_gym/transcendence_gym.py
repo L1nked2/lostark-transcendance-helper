@@ -8,7 +8,8 @@ from gymnasium import spaces
 from gymnasium.envs.registration import register
 from transcendence_gym.card import Card
 from transcendence_gym.board import Board
-from transcendence_gym.constants import BlockType, DistortApplicapableEffects
+from transcendence_gym.constants import CardType, BaseBlockType, SpecialBlockType, DistortApplicapableEffects, MAX_BOARD_SIZE, BASE_CARD_TYPE_SIZE
+from transcendence_gym.game import Game
 
 # Register this module as a gym environment. Once registered, the id is usable in gym.make().
 register(
@@ -16,12 +17,7 @@ register(
     entry_point='transcendence_gym.transcendence_gym:TranscendenceEnv',
 )
 
-
 class TranscendenceEnv(gym.Env):
-    CARD_TYPES = 32
-    BOARD_SIZE = 8
-    DEFAULT_BLOCK_TYPES = 4
-    SPECIAL_BLOCK_TYPES = 10
     CARD_PROBABILITY_TABLE = [0.150, 0.115, 0.095, 0.055, 0.105, 0.070, 0.090, 0.070, 0.100, 0.150]
     BLOCK_PROBABILITY_TABLE = [0.160, 0.160, 0.160, 0.235, 0.170, 0.115]
     DEFAULT_GOLD_RESET = 925
@@ -29,16 +25,8 @@ class TranscendenceEnv(gym.Env):
     DEFAULT_GOLD_WIN = 1000000
     with open('transcendence_gym/presets.json') as f:
         PRESETS = json.load(f)
-
-    @property
-    def protection_level(self):
-        if 1 <= self.stage <= 3:
-            protection_level = (self.trial_count - 2)//2
-        elif 4 <= self.stage <= 5:
-            protection_level = (self.trial_count - 3)//2
-        elif 6 <= self.stage <= 7:
-            protection_level = (self.trial_count - 4)//2
-        return min(protection_level, 10) if protection_level > 0 else 0
+        EQUIPMENT_NUM = len(PRESETS["boards"]) 
+        STAGE_NUM = len(PRESETS["boards"]["head"])
     
     def __init__(self):
 
@@ -52,164 +40,76 @@ class TranscendenceEnv(gym.Env):
         # available count for 3-star step, 0-11
         # available count for draw new card, 0-11
         # total 75 = 2 + 3 + 64 + 3 + 1 + 1 + 1
-        CARD_TYPES = TranscendenceEnv.CARD_TYPES
-        BOARD_SIZE = TranscendenceEnv.BOARD_SIZE
-        DEFAULT_BLOCK_TYPES = TranscendenceEnv.DEFAULT_BLOCK_TYPES
-        SPECIAL_BLOCK_TYPES = TranscendenceEnv.SPECIAL_BLOCK_TYPES
+        CARD_TYPES = len(CardType)
+        DEFAULT_BLOCK_TYPES = len(BaseBlockType)
+        SPECIAL_BLOCK_TYPES = len(SpecialBlockType)
         self.observation_space = spaces.Dict({"hand":spaces.MultiDiscrete([CARD_TYPES, CARD_TYPES], dtype=np.uint8), 
                                               "queue":spaces.MultiDiscrete([CARD_TYPES for _ in range(3)], dtype=np.uint8), 
-                                              "board":spaces.MultiDiscrete(np.full((BOARD_SIZE, BOARD_SIZE), DEFAULT_BLOCK_TYPES), dtype=np.uint8),
-                                              "special_block":spaces.MultiDiscrete((BOARD_SIZE, BOARD_SIZE, SPECIAL_BLOCK_TYPES), dtype=np.uint8),
+                                              "board":spaces.MultiDiscrete(np.full((MAX_BOARD_SIZE, MAX_BOARD_SIZE), DEFAULT_BLOCK_TYPES), dtype=np.uint8),
+                                              "special_block":spaces.MultiDiscrete((MAX_BOARD_SIZE, MAX_BOARD_SIZE, SPECIAL_BLOCK_TYPES), dtype=np.uint8),
                                               "remaining_step":spaces.Discrete(12), 
                                               "drawable_count":spaces.Discrete(12),
                                               "protection_level":spaces.Discrete(11)})
+        self.rng = np.random.default_rng()
         
-
     def _get_obs(self):
         observation = {
-            "hand": np.array(self.hand, dtype=np.uint8),
-            "queue": np.array(self.queue, dtype=np.uint8),
-            "board": self.board.values,
-            "special_block": self.board.special_block,
-            "remaining_step": self.remaining_step,
-            "drawable_count": self.drawable_count,
-            "protection_level": self.protection_level
+            "hand": np.array(self.game.card_queue.hand, dtype=np.uint8),
+            "queue": np.array(self.game.card_queue.queue, dtype=np.uint8),
+            "board": self.game.board.values,
+            "special_block": self.game.board.special_block,
+            "remaining_step": self.game.remaining_step,
+            "drawable_count": self.game.drawable_count,
+            "protection_level": self.game.protection_level
         }
         return observation
 
     def _get_info(self):
-        block_unique, block_counts = np.unique(self.board, return_counts=True)
+        block_unique, block_counts = np.unique(self.game.board.values, return_counts=True)
         remaining_blocks = dict(zip(block_unique, block_counts))
         return {"remaining_blocks": remaining_blocks}
-    
-    def _load_board_and_step(self, equipment_type_idx, level):
-        presets = TranscendenceEnv.PRESETS
-        equipment_types = list(presets["boards"].keys())
-        equipment_type = equipment_types[equipment_type_idx]
-        self.board = Board(np.array(presets["boards"][equipment_type][str(level)], dtype=np.uint8))
-        self.remaining_step = presets["available_steps"][equipment_type][str(level)]
-    
-    def _restore_board_and_hand(self, case_num):
-        # restore board
-        self.board = Board(np.zeros((8, 8), dtype=np.uint8))
-        self.board.special_block = np.zeros(3, dtype=np.uint8)
-        if case_num is None:
-            case_num = self.rng.choice(5*7)
-        self._load_board_and_step(case_num//7, case_num%7+1)
-        # fill hand and queue
-        self.hand = deque(maxlen=2)
-        self.queue = deque(maxlen=3)
-        self._fill_hand()
-        # apply protection level
-        self.drawable_count = 2 + self.protection_level
-        
 
-    def _fill_queue(self):
-        # loop until queue is filled
-        while len(self.queue) < 3:
-            # draw card
-            new_card = self.rng.choice(10, p=TranscendenceEnv.CARD_PROBABILITY_TABLE)
-            self.queue.appendleft(new_card)
+    def _draw_card(self):
+        # loop until card queue is filled
+        while not self.game.card_queue.isValid():
+            # draw new card according to card probability
+            new_card = self.rng.choice(BASE_CARD_TYPE_SIZE, p=TranscendenceEnv.CARD_PROBABILITY_TABLE)
+            self.game.fillCard(new_card)
 
-    def _fill_hand(self):
-        self._fill_queue()
-        # loop until hand is filled
-        while len(self.hand) < 2:
-            # fill empty hand
-            self.hand.append(self.queue.pop())        
-            # merge card if possible
-            if len(self.hand) == 2 and self.hand[0] % 10 == self.hand[1] % 10 and max(self.hand[0], self.hand[1]) < 20:
-                if self.hand[0] >= self.hand[1]:
-                    self.hand[0] += 10
-                    self.hand.pop()
-                else:
-                    self.hand[1] += 10
-                    self.hand.popleft()
-            # fill queue again
-            self._fill_queue()
-
-    def _use_card(self, slot, target_x, target_y):
-        assert slot == 0 or slot == 1
-        # use card to board
-        target_card_num = self.hand.popleft() if slot == 0 else self.hand.pop()
-        card = Card(target_card_num)
-        broken_block_effect = self.board.applyEffect(card.getCardEffect(), target_x, target_y)
-        self.remaining_step -= 1
-
-        # handle special block effect
-        # 4: 강화
-        if broken_block_effect == 4:
-          if self.hand[0] < 20:
-            self.hand[0] += 10
-        # 5: 복제
-        elif broken_block_effect == 5:
-          self.hand[0] = target_card_num
-        # 6: 신비
-        elif broken_block_effect == 6:
-          new_card = self.rng.choice(2)
-          if new_card == 0:
-            self.hand[0] = 31
-          else:
-            self.hand[0] = 32
-        # 7: 추가
-        elif broken_block_effect == 7:
-          self.drawable_count += 1
-        # 8: 재배치
-        elif broken_block_effect == 8:
-          fb = self.board.values.flatten()
-          idx, = np.nonzero(fb)
-          fb[idx] = fb[self.rng.permutation(idx)]
-          self.board.values = fb.reshape((8, 8))
-        # 9: 축복
-        elif broken_block_effect == 9:
-          self.remaining_step += 1
-        
+    def _set_special_block(self):
         # clear prev special block and add new special block
-        self.board.special_block = np.array([0, 0, 0], dtype=np.uint8)
-        candidates = np.transpose(np.where(self.board.values == 3))
+        self.game.board.special_block = np.array([0, 0, 0], dtype=np.uint8)
+        candidates = np.transpose(np.where(self.game.board.values == 3))
         if len(candidates) > 0:
-          sp = self.rng.choice(candidates)
-          self.board.special_block[0:2] = sp
-          self.board.special_block[2] = self.rng.choice(range(4, 10), p=TranscendenceEnv.BLOCK_PROBABILITY_TABLE)
-
-        # draw new card
-        self._fill_hand()
-
-    def _replace_card(self, slot):
-        assert slot == 0 or slot == 1
-        assert self.drawable_count > 0
-        # change card
-        self.drawable_count -= 1
-        if slot == 0:
-            self.hand.popleft()
-        else:
-            self.hand.pop()
-        # draw new card
-        self._fill_hand()
+          pos = self.rng.choice(candidates)
+          self.game.board.special_block[0:2] = pos
+          self.game.board.special_block[2] = self.rng.choice(range(len(SpecialBlockType)), p=TranscendenceEnv.BLOCK_PROBABILITY_TABLE)
 
     def reset(self, seed=None, options=None):
-        assert options and "case_num" in options
-        self.case_num = options["case_num"]
-        assert self.case_num is None or 0 <= self.case_num < 5 * 7
-        self.rng = np.random.default_rng(seed=seed)
-        self.stage = self.case_num%7+1
-        self.trial_count = 0
-        self._restore_board_and_hand(self.case_num)
+        if options and "case_num" in options:
+            self.case_num = options["case_num"]
+        else:
+            self.case_num = self.rng.choice(TranscendenceEnv.EQUIPMENT_NUM * TranscendenceEnv.STAGE_NUM)
+        equipment_types = list(TranscendenceEnv.PRESETS["boards"].keys())
+        equipment_type = equipment_types[self.case_num // TranscendenceEnv.STAGE_NUM]
+        self.stage = self.case_num % TranscendenceEnv.STAGE_NUM + 1
+        self.game = Game(equipment_type, self.stage)
+        self._draw_card()
         observation = self._get_obs()
         info = self._get_info()
         return observation, info
     
     def is_action_available(self, action):
       if action < 128:
-          card = self.hand[0] if action < 64 else self.hand[1]
+          card = self.game.card_queue.hand[0] if action < 64 else self.game.card_queue.hand[1]
           x = action//8 if action < 64 else (action-64)//8
           y = action%8 if action < 64 else (action-64)%8
-          if self.board[x, y] < 2:
+          if self.game.board[x, y] < 2:
               return False
-          elif self.board[x, y] == 2 and \
+          elif self.game.board[x, y] == 2 and \
                 not (Card(card).getCardEffect() in DistortApplicapableEffects):
               return False
-      elif (action == 128 or action == 129) and self.drawable_count <= 0:
+      elif (action == 128 or action == 129) and self.game.drawable_count <= 0:
           return False
       elif action == 130:
           pass
@@ -218,7 +118,6 @@ class TranscendenceEnv(gym.Env):
       return True
 
     def step(self, action):
-        
         # check action is available
         if not self.is_action_available(action):
             reward = 0
@@ -230,23 +129,25 @@ class TranscendenceEnv(gym.Env):
                 slot = 0 if action < 64 else 1
                 x = action//8 if action < 64 else (action-64)//8
                 y = action%8 if action < 64 else (action-64)%8
-                self._use_card(slot, x, y)
+                self.game.useCard(slot, x, y)
+                self._set_special_block()
             # type 2: replace card, it's ensured that drawable_count > 0
             elif action == 128 or action == 129:
-                self._replace_card(action - 128)
+                self.game.replaceCard(action - 128)
             # type 3: reset and start new one
             elif action == 130:
-                self.trial_count += 1
-                self._restore_board_and_hand(self.case_num)
+                self.game.restore()
                 reward = -self.DEFAULT_GOLD_RESET
             else:
                 raise ValueError("Invalid action: {}".format(action))
+            self._draw_card()
         observation = self._get_obs()
-        terminated = np.all(self.board.values < 3)
+        terminated = self.game.isTerminated
+        truncated = False#self.game.remaining_step <= 0
         if terminated:
             reward = self.DEFAULT_GOLD_WIN
         info = self._get_info()
-        return observation, reward, terminated, False, info
+        return observation, reward, terminated, truncated, info
 
     def render(self):
         pass

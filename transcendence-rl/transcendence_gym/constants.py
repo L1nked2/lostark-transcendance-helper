@@ -5,6 +5,9 @@ MAX_BOARD_SIZE = 8
 BASE_CARD_TYPE_SIZE = 10
 MAX_CARD_STRENGTH = 2
 
+HAND_SIZE = 2
+QUEUE_SIZE = 3
+
 class CardType(IntEnum):
     LIGHTNING = 0
     RISING_FIRE = 1
@@ -16,20 +19,22 @@ class CardType(IntEnum):
     EARTHQUAKE = 7
     PURIFICATION = 8
     TORNADO = 9
-    EXPULSION = 31
-    RESONANCE_OF_WORLD_TREE = 32
+    EXPULSION = 30
+    RESONANCE_OF_WORLD_TREE = 31
 
-class BlockType(IntEnum):
+class BaseBlockType(IntEnum):
     EMPTY = 0
     DESTROYED = 1
     DISTORTED = 2
     NORMAL = 3  # Normal block that can be destroyed
-    ENHANCE = 4
-    DUPLICATE = 5
-    MYSTIC = 6
-    ADDITION = 7
-    REARRANGE = 8
-    BLESS = 9
+
+class SpecialBlockType(IntEnum):
+    ENHANCE = 0
+    DUPLICATE = 1
+    MYSTIC = 2
+    ADDITION = 3
+    REARRANGE = 4
+    BLESS = 5
 
 class CaseInsensitiveEnumMeta(EnumMeta):
     def __getitem__(self, name):

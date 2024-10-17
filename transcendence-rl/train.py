@@ -35,7 +35,7 @@ if __name__ == '__main__':
     print("episodes: ", num_episodes)
     for i_episode in tqdm(range(num_episodes)):
         # Initialize the environment and get its state
-        state, info = env.reset(options={"case_num": i_episode % 5 * 7})
+        state, info = env.reset(options={"case_num": i_episode % TranscendenceEnv.EQUIPMENT_NUM * TranscendenceEnv.STAGE_NUM})
         state = flatten_dict_concat(state)
         state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
         for t in count():

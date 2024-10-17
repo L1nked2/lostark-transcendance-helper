@@ -1,5 +1,5 @@
 import numpy as np
-from transcendence_gym.constants import BlockType, CardType, MAX_CARD_STRENGTH
+from transcendence_gym.constants import BaseBlockType, CardType, MAX_CARD_STRENGTH
 from transcendence_gym.board import Board
 from functools import partial
 
@@ -94,12 +94,12 @@ def applyThunderbolt(board:Board, x, y, strength):
     rng = np.random.default_rng()
     n = rng.choice(range(-1, 3 + 2 * strength))
     if n < 0:
-        positions = np.transpose(np.nonzero(board.values == BlockType.DESTROYED))
+        positions = np.transpose(np.nonzero(board.values == BaseBlockType.DESTROYED))
         new_blocks_pos = rng.choice(positions, size=min(1, len(positions)), replace=False)
         for pos in new_blocks_pos:
-            board[pos[0], pos[1]] = BlockType.NORMAL
+            board[pos[0], pos[1]] = BaseBlockType.NORMAL
     else:
-        positions = np.transpose(np.nonzero(board.values == BlockType.NORMAL))
+        positions = np.transpose(np.nonzero(board.values == BaseBlockType.NORMAL))
         new_blocks_pos = rng.choice(positions, size=min(n, len(positions)), replace=False)
         for pos in new_blocks_pos:
             new_block_effect = board.removeTargetBlock(pos[0], pos[1])
