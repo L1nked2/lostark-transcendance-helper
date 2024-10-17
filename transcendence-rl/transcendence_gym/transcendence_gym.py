@@ -17,7 +17,6 @@ register(
 )
 
 
-
 class TranscendenceEnv(gym.Env):
     CARD_TYPES = 32
     BOARD_SIZE = 8
@@ -25,6 +24,9 @@ class TranscendenceEnv(gym.Env):
     SPECIAL_BLOCK_TYPES = 10
     CARD_PROBABILITY_TABLE = [0.150, 0.115, 0.095, 0.055, 0.105, 0.070, 0.090, 0.070, 0.100, 0.150]
     BLOCK_PROBABILITY_TABLE = [0.160, 0.160, 0.160, 0.235, 0.170, 0.115]
+    DEFAULT_GOLD_RESET = 925
+    DEFAULT_GOLD_USE_CARD = 140
+    DEFAULT_GOLD_WIN = 1000000
     with open('transcendence_gym/presets.json') as f:
         PRESETS = json.load(f)
 
@@ -36,7 +38,7 @@ class TranscendenceEnv(gym.Env):
             protection_level = (self.trial_count - 3)//2
         elif 6 <= self.stage <= 7:
             protection_level = (self.trial_count - 4)//2
-        return protection_level if protection_level > 0 else 0
+        return min(protection_level, 10) if protection_level > 0 else 0
     
     def __init__(self):
 
@@ -116,7 +118,7 @@ class TranscendenceEnv(gym.Env):
             # fill empty hand
             self.hand.append(self.queue.pop())        
             # merge card if possible
-            if len(self.hand) == 2 and self.hand[0] % 10 == self.hand[1] % 10 and max(self.hand[0], self.hand[1]) < 30:
+            if len(self.hand) == 2 and self.hand[0] % 10 == self.hand[1] % 10 and max(self.hand[0], self.hand[1]) < 20:
                 if self.hand[0] >= self.hand[1]:
                     self.hand[0] += 10
                     self.hand.pop()
@@ -154,10 +156,10 @@ class TranscendenceEnv(gym.Env):
           self.drawable_count += 1
         # 8: 재배치
         elif broken_block_effect == 8:
-          fb = self.board.flatten()
+          fb = self.board.values.flatten()
           idx, = np.nonzero(fb)
           fb[idx] = fb[self.rng.permutation(idx)]
-          self.board = fb.reshape((8, 8))
+          self.board.values = fb.reshape((8, 8))
         # 9: 축복
         elif broken_block_effect == 9:
           self.remaining_step += 1
@@ -187,59 +189,64 @@ class TranscendenceEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         assert options and "case_num" in options
-        case_num = options["case_num"]
-        assert case_num is None or 0 <= case_num < 5 * 7
+        self.case_num = options["case_num"]
+        assert self.case_num is None or 0 <= self.case_num < 5 * 7
         self.rng = np.random.default_rng(seed=seed)
-        self.stage = case_num%7+1
+        self.stage = self.case_num%7+1
         self.trial_count = 0
-        self._restore_board_and_hand(case_num)
+        self._restore_board_and_hand(self.case_num)
         observation = self._get_obs()
         info = self._get_info()
         return observation, info
+    
+    def is_action_available(self, action):
+      if action < 128:
+          card = self.hand[0] if action < 64 else self.hand[1]
+          x = action//8 if action < 64 else (action-64)//8
+          y = action%8 if action < 64 else (action-64)%8
+          if self.board[x, y] < 2:
+              return False
+          elif self.board[x, y] == 2 and \
+                not (Card(card).getCardEffect() in DistortApplicapableEffects):
+              return False
+      elif (action == 128 or action == 129) and self.drawable_count <= 0:
+          return False
+      elif action == 130:
+          pass
+      else:
+          return False
+      return True
 
     def step(self, action):
-        self.hand_backup = self.hand.copy()
-        try:
-          # parse action
-          # type 1: use card
-          if action < 128:
-              if action < 64:
-                  self._use_card(0, action//8, action%8)
-              else:
-                  self._use_card(1, (action-64)//8, (action-64)%8)
-          # type 2: replace card, it's ensured that drawable_count > 0
-          elif action == 129 or action == 130:
-              self._replace_card(action - 129)
-          elif action == 131:
-              # reset and start new one
-              raise NotImplementedError
-        except:
-            self.hand = self.hand_backup
+        
+        # check action is available
+        if not self.is_action_available(action):
+            reward = 0
+        else:
+            reward = -self.DEFAULT_GOLD_USE_CARD
+            # parse action
+            # type 1: use card
+            if action < 128:
+                slot = 0 if action < 64 else 1
+                x = action//8 if action < 64 else (action-64)//8
+                y = action%8 if action < 64 else (action-64)%8
+                self._use_card(slot, x, y)
+            # type 2: replace card, it's ensured that drawable_count > 0
+            elif action == 128 or action == 129:
+                self._replace_card(action - 128)
+            # type 3: reset and start new one
+            elif action == 130:
+                self.trial_count += 1
+                self._restore_board_and_hand(self.case_num)
+                reward = -self.DEFAULT_GOLD_RESET
+            else:
+                raise ValueError("Invalid action: {}".format(action))
         observation = self._get_obs()
         terminated = np.all(self.board.values < 3)
-        reward = 1 if terminated else 0
+        if terminated:
+            reward = self.DEFAULT_GOLD_WIN
         info = self._get_info()
         return observation, reward, terminated, False, info
-
-    def get_action_mask(self, observation):
-        mask = np.ones(self.action_space.n)
-        hand_l, hand_r = observation["hand"][0], observation["hand"][1]
-        for i in range(64):
-            if observation["board"][i//8, i%8] < 2:
-                mask[i] = 0
-                mask[i+64] = 0
-            elif observation["board"][i//8, i%8] == 2:
-              if not (Card(hand_l).getCardEffect() in DistortApplicapableEffects):
-                mask[i] = 0
-              if not (Card(hand_r).getCardEffect() in DistortApplicapableEffects):
-                mask[i+64] = 0
-        if self.drawable_count == 0:
-            mask[128] = 0
-            mask[129] = 0
-        # to be implemented
-        mask[130] = 0
-
-        return mask
 
     def render(self):
         pass

@@ -5,7 +5,7 @@ class Card(object):
     def __init__(self, card_num):
         self.card_num = card_num
         if card_num // BASE_CARD_TYPE_SIZE > MAX_CARD_STRENGTH:
-            self.strength = MAX_CARD_STRENGTH
+            self.strength = 0
             self.type = card_num
         else:
           self.strength = card_num // BASE_CARD_TYPE_SIZE
