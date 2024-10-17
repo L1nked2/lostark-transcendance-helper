@@ -8,7 +8,7 @@ from gymnasium import spaces
 from gymnasium.envs.registration import register
 from transcendence_gym.card import Card
 from transcendence_gym.board import Board
-from transcendence_gym.constants import CardType, BaseBlockType, SpecialBlockType, DistortApplicapableEffects, MAX_BOARD_SIZE, BASE_CARD_TYPE_SIZE
+from transcendence_gym.constants import CardType, BaseBlockType, SpecialBlockType, DistortApplicapableEffects, MAX_BOARD_SIZE, BASE_CARD_TYPE_SIZE, HAND_SIZE
 from transcendence_gym.game import Game
 
 # Register this module as a gym environment. Once registered, the id is usable in gym.make().
@@ -125,17 +125,20 @@ class TranscendenceEnv(gym.Env):
             reward = -self.DEFAULT_GOLD_USE_CARD
             # parse action
             # type 1: use card
-            if action < 128:
-                slot = 0 if action < 64 else 1
-                x = action//8 if action < 64 else (action-64)//8
-                y = action%8 if action < 64 else (action-64)%8
+            board_entry_size = MAX_BOARD_SIZE * MAX_BOARD_SIZE
+            use_action_size = board_entry_size * HAND_SIZE
+            if action < use_action_size:
+                slot = action // board_entry_size
+                use_action = action % board_entry_size
+                x = use_action//MAX_BOARD_SIZE
+                y = use_action%MAX_BOARD_SIZE
                 self.game.useCard(slot, x, y)
                 self._set_special_block()
             # type 2: replace card, it's ensured that drawable_count > 0
-            elif action == 128 or action == 129:
+            elif use_action_size <= action < use_action_size + HAND_SIZE:
                 self.game.replaceCard(action - 128)
             # type 3: reset and start new one
-            elif action == 130:
+            elif action == use_action_size + HAND_SIZE:
                 self.game.restore()
                 reward = -self.DEFAULT_GOLD_RESET
             else:
@@ -143,7 +146,7 @@ class TranscendenceEnv(gym.Env):
             self._draw_card()
         observation = self._get_obs()
         terminated = self.game.isTerminated
-        truncated = False#self.game.remaining_step <= 0
+        truncated = self.game.remaining_step <= -2
         if terminated:
             reward = self.DEFAULT_GOLD_WIN
         info = self._get_info()

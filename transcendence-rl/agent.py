@@ -1,10 +1,29 @@
-from model import DQN, ReplayMemory, Transition
+from model.model import DQN
 import numpy as np
 import math
 import torch
 import torch.optim as optim
 from utils import flatten_dict_concat
+from collections import namedtuple, deque
+import random
 
+Transition = namedtuple('Transition',
+                        ('state', 'action', 'next_state', 'reward'))
+
+class ReplayMemory(object):
+
+    def __init__(self, capacity):
+        self.memory = deque([], maxlen=capacity)
+
+    def push(self, *args):
+        self.memory.append(Transition(*args))
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
+    
 class Agent(object):
   def __init__(self, env, model, device, batch_size=128,
                gamma=0.99, eps_start=1.0, eps_end=0.05, eps_decay=1000, 

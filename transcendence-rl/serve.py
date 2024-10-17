@@ -1,5 +1,5 @@
 import torch
-from model import DQN
+from model.model import DQN
 import gymnasium as gym
 from transcendence_gym.transcendence_gym import TranscendenceEnv
 from utils import flatten_dict_concat
@@ -18,5 +18,7 @@ if __name__ == '__main__':
   policy_net = DQN(n_observations, n_actions).to(device)
   policy_net.load_state_dict(torch.load(PATH, weights_only=True))
   policy_net.eval()
+
+  
 
 
