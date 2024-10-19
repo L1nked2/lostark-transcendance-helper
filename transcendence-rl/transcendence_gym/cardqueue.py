@@ -20,10 +20,10 @@ class CardQueue(object):
   def mergeCard(self):
     assert self.hand[0] >= 0 and self.hand[1] >= 0
     while self.hand[0] % BASE_CARD_TYPE_SIZE == self.hand[1] % BASE_CARD_TYPE_SIZE \
-          and max(self.hand[0], self.hand[1]) < BASE_CARD_TYPE_SIZE * MAX_CARD_STRENGTH:
+          and max(self.hand[0]//BASE_CARD_TYPE_SIZE, self.hand[1]//BASE_CARD_TYPE_SIZE) < MAX_CARD_STRENGTH:
         if self.hand[0] < self.hand[1]:
             self.hand[0], self.hand[1] = self.hand[1], self.hand[0]
-        self.hand[0] += 10
+        self.hand[0] += BASE_CARD_TYPE_SIZE
         self.hand[1] = self.queue.pop()
         self.queue.appendleft(-1)
 
@@ -51,7 +51,7 @@ class CardQueue(object):
     for idx in range(len(self.hand)-1, -1, -1):
       if self.hand[idx] == -1:
         self.hand[idx] = card_num
-        if self.hand[0] > 0 and self.hand[1] > 0:
+        if self.hand[0] >= 0 and self.hand[1] >= 0:
           self.mergeCard()
         return
     for idx in range(len(self.queue)-1, -1, -1):

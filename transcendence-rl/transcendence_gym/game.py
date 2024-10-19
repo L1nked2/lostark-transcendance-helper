@@ -1,6 +1,6 @@
 from transcendence_gym.board import Board
 from transcendence_gym.cardqueue import CardQueue
-from transcendence_gym.constants import CardType, BASE_CARD_TYPE_SIZE, MAX_CARD_STRENGTH, SpecialBlockType, MAX_BOARD_SIZE
+from transcendence_gym.constants import CardType, BASE_CARD_TYPE_SIZE, MAX_CARD_STRENGTH, BaseBlockType, SpecialBlockType, MAX_BOARD_SIZE
 import json
 import numpy as np
 
@@ -22,7 +22,11 @@ class Game(object):
           protection_level = (self.trial_count - 3)//2
       elif 6 <= self.stage <= 7:
           protection_level = (self.trial_count - 4)//2
-      return min(protection_level, 10) if protection_level > 0 else 0  
+      return min(protection_level, 10) if protection_level > 0 else 0
+  
+  @property
+  def normal_block_count(self):
+    return np.count_nonzero(self.board.values == BaseBlockType.NORMAL)
 
   def restore(self):
     presets = Game.PRESETS
@@ -34,8 +38,8 @@ class Game(object):
     self.drawable_count = 2 + self.protection_level
   
   @property
-  def isTerminated(self):
-    return np.all(self.board.values < 3)
+  def is_terminated(self):
+    return np.all(self.board.values < BaseBlockType.NORMAL)
   
   def fillCard(self, card_num):
     self.card_queue.replaceCard(card_num)
@@ -51,20 +55,20 @@ class Game(object):
     self.drawable_count -= 1
 
   def applyBlockEffect(self, block_effect, card, used_card_idx):
-    target_card_idx = 0 if used_card_idx == 1 else 0
+    remaining_card_idx = 0 if used_card_idx == 1 else 0
     # handle special block effect
     # 강화
     if block_effect == SpecialBlockType.ENHANCE:
-      if self.card_queue.hand[target_card_idx] // BASE_CARD_TYPE_SIZE < MAX_CARD_STRENGTH:
-        self.card_queue.hand[target_card_idx] += BASE_CARD_TYPE_SIZE
+      if self.card_queue.hand[remaining_card_idx] // BASE_CARD_TYPE_SIZE < MAX_CARD_STRENGTH:
+        self.card_queue.hand[remaining_card_idx] += BASE_CARD_TYPE_SIZE
     # 복제
     elif block_effect == SpecialBlockType.DUPLICATE:
-      self.card_queue.setHand(target_card_idx, card.card_num)
+      self.card_queue.setHand(remaining_card_idx, card.card_num)
       self.card_queue.mergeCard()
     # 신비
     elif block_effect == SpecialBlockType.MYSTIC:
       new_card_num = self.rng.choice([CardType.EXPULSION, CardType.RESONANCE_OF_WORLD_TREE])
-      self.card_queue.setHand(target_card_idx, new_card_num)
+      self.card_queue.setHand(remaining_card_idx, new_card_num)
     # 추가
     elif block_effect == SpecialBlockType.ADDITION:
       self.drawable_count += 1

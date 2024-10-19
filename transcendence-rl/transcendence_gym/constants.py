@@ -1,13 +1,14 @@
 from enum import IntEnum, StrEnum, EnumMeta
 
 DEFAULT_DISTORT_SIDE_EFFECT_BLOCK_NUM = 3
-MAX_BOARD_SIZE = 8
-BASE_CARD_TYPE_SIZE = 10
-MAX_CARD_STRENGTH = 2
 
+MAX_BOARD_SIZE = 8
 HAND_SIZE = 2
 QUEUE_SIZE = 3
 
+BASE_CARD_TYPE_SIZE = 10
+TOTAL_CARD_TYPE_SIZE = 32
+MAX_CARD_STRENGTH = 2
 class CardType(IntEnum):
     LIGHTNING = 0
     RISING_FIRE = 1
@@ -29,12 +30,13 @@ class BaseBlockType(IntEnum):
     NORMAL = 3  # Normal block that can be destroyed
 
 class SpecialBlockType(IntEnum):
-    ENHANCE = 0
-    DUPLICATE = 1
-    MYSTIC = 2
-    ADDITION = 3
-    REARRANGE = 4
-    BLESS = 5
+    NONE = 0
+    ENHANCE = 1
+    DUPLICATE = 2
+    MYSTIC = 3
+    ADDITION = 4
+    REARRANGE = 5
+    BLESS = 6
 
 class CaseInsensitiveEnumMeta(EnumMeta):
     def __getitem__(self, name):

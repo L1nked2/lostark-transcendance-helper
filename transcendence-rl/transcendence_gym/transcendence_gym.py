@@ -8,7 +8,7 @@ from gymnasium import spaces
 from gymnasium.envs.registration import register
 from transcendence_gym.card import Card
 from transcendence_gym.board import Board
-from transcendence_gym.constants import CardType, BaseBlockType, SpecialBlockType, DistortApplicapableEffects, MAX_BOARD_SIZE, BASE_CARD_TYPE_SIZE, HAND_SIZE
+from transcendence_gym.constants import CardType, BaseBlockType, SpecialBlockType, DistortApplicapableEffects, MAX_BOARD_SIZE, BASE_CARD_TYPE_SIZE, TOTAL_CARD_TYPE_SIZE, HAND_SIZE, QUEUE_SIZE
 from transcendence_gym.game import Game
 
 # Register this module as a gym environment. Once registered, the id is usable in gym.make().
@@ -20,45 +20,73 @@ register(
 class TranscendenceEnv(gym.Env):
     CARD_PROBABILITY_TABLE = [0.150, 0.115, 0.095, 0.055, 0.105, 0.070, 0.090, 0.070, 0.100, 0.150]
     BLOCK_PROBABILITY_TABLE = [0.160, 0.160, 0.160, 0.235, 0.170, 0.115]
-    DEFAULT_GOLD_RESET = 925
-    DEFAULT_GOLD_USE_CARD = 140
-    DEFAULT_GOLD_WIN = 1000000
+    DEFAULT_GOLD_USE_CARD = 0.02
+    DEFAULT_GOLD_WIN = 1.0
+    DEFAULT_GOLD_BLOCK = 0.01
     with open('transcendence_gym/presets.json') as f:
         PRESETS = json.load(f)
         EQUIPMENT_NUM = len(PRESETS["boards"]) 
         STAGE_NUM = len(PRESETS["boards"]["head"])
     
     def __init__(self):
-
+        self.board_entry_size = MAX_BOARD_SIZE * MAX_BOARD_SIZE
+        self.use_action_size = self.board_entry_size * HAND_SIZE
         # use card_1 or card_2 on somewhere: 8 * 8 * 2 = 128
         # change card_1 or card_2: 2
         # reset: 1
         # total 131
-        self.action_space = spaces.Discrete(131)
-        # 32 types of cards, 5 cards of queue
-        # 8 * 8 board, 10 types of blocks
-        # available count for 3-star step, 0-11
-        # available count for draw new card, 0-11
-        # total 75 = 2 + 3 + 64 + 3 + 1 + 1 + 1
-        CARD_TYPES = len(CardType)
-        DEFAULT_BLOCK_TYPES = len(BaseBlockType)
-        SPECIAL_BLOCK_TYPES = len(SpecialBlockType)
-        self.observation_space = spaces.Dict({"hand":spaces.MultiDiscrete([CARD_TYPES, CARD_TYPES], dtype=np.uint8), 
-                                              "queue":spaces.MultiDiscrete([CARD_TYPES for _ in range(3)], dtype=np.uint8), 
-                                              "board":spaces.MultiDiscrete(np.full((MAX_BOARD_SIZE, MAX_BOARD_SIZE), DEFAULT_BLOCK_TYPES), dtype=np.uint8),
-                                              "special_block":spaces.MultiDiscrete((MAX_BOARD_SIZE, MAX_BOARD_SIZE, SPECIAL_BLOCK_TYPES), dtype=np.uint8),
-                                              "remaining_step":spaces.Discrete(12), 
-                                              "drawable_count":spaces.Discrete(12),
-                                              "protection_level":spaces.Discrete(11)})
+        self.action_space = spaces.Discrete(self.use_action_size + HAND_SIZE + 1)
+        # observation:
+        # board size = 64
+        # card type size = 32
+        # available count for 3-star step, 0~11
+        # available count for draw new card, 0~11
+        # available count for protection level, 0~10
+        # normal block board + distorted block board + special block board + special block type
+        # + hand0 + hand1 + queue0 + queue1 + queue2
+        # + remaining step + drawable count + protection level
+        # total 329 = 64 + 64 + 64 + 6 + 32 + 32 + 32 + 32 + 1 + 1 + 1
+        SPECIAL_BLOCK_TYPE_SIZE = len(SpecialBlockType)
+        self.observation_space = spaces.Dict({"normal_block_board": spaces.MultiBinary((MAX_BOARD_SIZE, MAX_BOARD_SIZE)),
+                                              "distorted_block_board": spaces.MultiBinary((MAX_BOARD_SIZE, MAX_BOARD_SIZE)),
+                                              "special_block_board": spaces.MultiBinary((MAX_BOARD_SIZE, MAX_BOARD_SIZE)),
+                                              "special_block_type": spaces.MultiBinary(SPECIAL_BLOCK_TYPE_SIZE),
+                                              "hand_0": spaces.MultiBinary(TOTAL_CARD_TYPE_SIZE),
+                                              "hand_1": spaces.MultiBinary(TOTAL_CARD_TYPE_SIZE),
+                                              "queue_0": spaces.MultiBinary(TOTAL_CARD_TYPE_SIZE),
+                                              "queue_1": spaces.MultiBinary(TOTAL_CARD_TYPE_SIZE),
+                                              "queue_2": spaces.MultiBinary(TOTAL_CARD_TYPE_SIZE),
+                                              "remaining_step": spaces.Discrete(12), 
+                                              "drawable_count": spaces.Discrete(12),
+                                              "protection_level": spaces.Discrete(11)})
         self.rng = np.random.default_rng()
         
     def _get_obs(self):
+        board = self.game.board.values
+        normal_only = np.vectorize(lambda x: 1 if x == BaseBlockType.NORMAL else 0)
+        distorted_only = np.vectorize(lambda x: 1 if x == BaseBlockType.DISTORTED else 0)
+        special_board = np.zeros((MAX_BOARD_SIZE, MAX_BOARD_SIZE), dtype=np.uint8)
+        if self.game.board.special_block[2] != SpecialBlockType.NONE:
+          special_board[self.game.board.special_block[0], self.game.board.special_block[1]] = 1
+        special_block_type = np.zeros(len(SpecialBlockType), dtype=np.uint8)
+        special_block_type[self.game.board.special_block[2]] = 1
+        hand = [np.zeros(TOTAL_CARD_TYPE_SIZE, dtype=np.uint8) for _ in range(HAND_SIZE)]
+        for i in range(HAND_SIZE):
+            hand[i][self.game.card_queue.hand[0]] = 1
+        queue = [np.zeros(TOTAL_CARD_TYPE_SIZE, dtype=np.uint8) for _ in range(QUEUE_SIZE)]
+        for i in range(QUEUE_SIZE):
+            queue[i][self.game.card_queue.queue[i]] = 1
         observation = {
-            "hand": np.array(self.game.card_queue.hand, dtype=np.uint8),
-            "queue": np.array(self.game.card_queue.queue, dtype=np.uint8),
-            "board": self.game.board.values,
-            "special_block": self.game.board.special_block,
-            "remaining_step": self.game.remaining_step,
+            "normal_block_board": normal_only(board),
+            "distorted_block_board": distorted_only(board),
+            "special_block_board": special_board,
+            "special_block_type": special_block_type,
+            "hand_0": hand[0],
+            "hand_1": hand[1],
+            "queue_0": queue[0],
+            "queue_1": queue[1],
+            "queue_2": queue[2],
+            "remaining_step": self.game.remaining_step, 
             "drawable_count": self.game.drawable_count,
             "protection_level": self.game.protection_level
         }
@@ -83,7 +111,7 @@ class TranscendenceEnv(gym.Env):
         if len(candidates) > 0:
           pos = self.rng.choice(candidates)
           self.game.board.special_block[0:2] = pos
-          self.game.board.special_block[2] = self.rng.choice(range(len(SpecialBlockType)), p=TranscendenceEnv.BLOCK_PROBABILITY_TABLE)
+          self.game.board.special_block[2] = self.rng.choice(range(1, len(SpecialBlockType)), p=TranscendenceEnv.BLOCK_PROBABILITY_TABLE)
 
     def reset(self, seed=None, options=None):
         if options and "case_num" in options:
@@ -99,58 +127,62 @@ class TranscendenceEnv(gym.Env):
         info = self._get_info()
         return observation, info
     
-    def is_action_available(self, action):
-      if action < 128:
-          card = self.game.card_queue.hand[0] if action < 64 else self.game.card_queue.hand[1]
-          x = action//8 if action < 64 else (action-64)//8
-          y = action%8 if action < 64 else (action-64)%8
-          if self.game.board[x, y] < 2:
-              return False
-          elif self.game.board[x, y] == 2 and \
-                not (Card(card).getCardEffect() in DistortApplicapableEffects):
-              return False
-      elif (action == 128 or action == 129) and self.game.drawable_count <= 0:
-          return False
-      elif action == 130:
-          pass
+    def get_action_mask(self):
+      if 0 < self.game.remaining_step:
+        mask = np.ones((1, self.action_space.n), dtype=bool)
+        for action in range(mask.shape[1]):
+          if action < self.use_action_size:
+              slot = action // self.board_entry_size
+              use_action = action % self.board_entry_size
+              x = use_action // MAX_BOARD_SIZE
+              y = use_action % MAX_BOARD_SIZE
+              card = self.game.card_queue.hand[slot]
+              if self.game.board[x, y] < 2:
+                  mask[0, action] = False
+              elif self.game.board[x, y] == 2 and \
+                    not (Card(card).getCardEffect() in DistortApplicapableEffects):
+                  mask[0, action] = False
+          elif action < self.use_action_size + HAND_SIZE:
+              if self.game.drawable_count <= 0:
+                  mask[0, action] = False
+          elif action == self.use_action_size + HAND_SIZE:
+              pass
+          else:
+              raise ValueError("Invalid action: {}".format(action))
       else:
-          return False
-      return True
+        mask = np.zeros((1, self.action_space.n), dtype=bool)
+        mask[0, self.use_action_size + HAND_SIZE] = True
+      return mask
 
     def step(self, action):
-        # check action is available
-        if not self.is_action_available(action):
-            reward = 0
+        reward = 0
+        prev_normal_block_count = self.game.normal_block_count
+        # parse action
+        # type 1: use card
+        if action < self.use_action_size:
+            slot = action // self.board_entry_size
+            use_action = action % self.board_entry_size
+            x = use_action // MAX_BOARD_SIZE
+            y = use_action % MAX_BOARD_SIZE
+            self.game.useCard(slot, x, y)
+            self._set_special_block()
+            normal_block_count_diff = self.game.normal_block_count - prev_normal_block_count
+            reward += -self.DEFAULT_GOLD_BLOCK * normal_block_count_diff / (self.game.remaining_step+1) * 10
+        # type 2: replace card, it's ensured that drawable_count > 0
+        elif self.use_action_size <= action < self.use_action_size + HAND_SIZE:
+            self.game.replaceCard(action - self.use_action_size)
+        # type 3: reset and start new one
+        elif action == self.use_action_size + HAND_SIZE:
+            self.game.restore()
         else:
-            reward = -self.DEFAULT_GOLD_USE_CARD
-            # parse action
-            # type 1: use card
-            board_entry_size = MAX_BOARD_SIZE * MAX_BOARD_SIZE
-            use_action_size = board_entry_size * HAND_SIZE
-            if action < use_action_size:
-                slot = action // board_entry_size
-                use_action = action % board_entry_size
-                x = use_action//MAX_BOARD_SIZE
-                y = use_action%MAX_BOARD_SIZE
-                self.game.useCard(slot, x, y)
-                self._set_special_block()
-            # type 2: replace card, it's ensured that drawable_count > 0
-            elif use_action_size <= action < use_action_size + HAND_SIZE:
-                self.game.replaceCard(action - 128)
-            # type 3: reset and start new one
-            elif action == use_action_size + HAND_SIZE:
-                self.game.restore()
-                reward = -self.DEFAULT_GOLD_RESET
-            else:
-                raise ValueError("Invalid action: {}".format(action))
-            self._draw_card()
+            raise ValueError("Invalid action: {}".format(action))
+        self._draw_card()
         observation = self._get_obs()
-        terminated = self.game.isTerminated
-        truncated = self.game.remaining_step <= -2
+        terminated = self.game.is_terminated
         if terminated:
-            reward = self.DEFAULT_GOLD_WIN
+            reward = self.DEFAULT_GOLD_WIN if self.game.remaining_step >= 0 else 0
         info = self._get_info()
-        return observation, reward, terminated, truncated, info
+        return observation, reward, terminated, False, info
 
     def render(self):
         pass

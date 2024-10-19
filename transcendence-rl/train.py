@@ -1,6 +1,7 @@
 import numpy as np
 import gymnasium as gym
 from transcendence_gym.transcendence_gym import TranscendenceEnv
+from gymnasium.wrappers import TimeLimit
 from itertools import count
 import torch
 from agent import Agent
@@ -11,6 +12,7 @@ PATH = f'./model/dqn.pth'
 
 if __name__ == '__main__':
     env = gym.make('transcendence-sim-v0')
+    env = TimeLimit(env, max_episode_steps=1000)
     options = {
       "case_num": 0,
     }
@@ -21,7 +23,7 @@ if __name__ == '__main__':
     EPS_END = 0.05
     EPS_DECAY = 1000
     TAU = 0.005
-    LR = 1e-4
+    LR = 1e-3
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     agent = Agent(env, 'dqn', device, batch_size=BATCH_SIZE,
@@ -29,22 +31,23 @@ if __name__ == '__main__':
                   tau=TAU, lr=LR)
     
     if torch.cuda.is_available() or torch.backends.mps.is_available():
-        num_episodes = 600
+        num_episodes = 4000
     else:
         num_episodes = 50
     print("episodes: ", num_episodes)
     for i_episode in tqdm(range(num_episodes)):
         # Initialize the environment and get its state
-        state, info = env.reset(options={"case_num": i_episode % TranscendenceEnv.EQUIPMENT_NUM * TranscendenceEnv.STAGE_NUM})
+        #state, info = env.reset(options={"case_num": i_episode % TranscendenceEnv.EQUIPMENT_NUM * TranscendenceEnv.STAGE_NUM})
+        state, info = env.reset(options={"case_num": 0})
         state = flatten_dict_concat(state)
         state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
         for t in count():
             action = agent.select_action(state)
-            observation, reward, terminated, truncated, _ = env.step(action.item())
+            observation, reward, terminated, truncated, info = env.step(action.item())
             observation = flatten_dict_concat(observation)
             reward = torch.tensor([reward], device=device)
             done = terminated or truncated
-
+  
             if terminated:
                 next_state = None
             else:

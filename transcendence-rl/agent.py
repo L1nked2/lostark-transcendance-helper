@@ -1,5 +1,6 @@
 from model.model import DQN
 import numpy as np
+import numpy.ma as ma
 import math
 import torch
 import torch.optim as optim
@@ -63,13 +64,23 @@ class Agent(object):
     eps_threshold = self.eps_end + (self.eps_start - self.eps_end) * \
         math.exp(-1. * self.steps_done / self.eps_decay)
     self.steps_done += 1
+    mask = self.env.unwrapped.get_action_mask()
+    available_actions = ma.masked_array(np.arange(self.env.action_space.n), mask=~mask).compressed()
     if sample > eps_threshold:
         # get best q value-action from policy net
         with torch.no_grad():
-            return self.policy_net(state).max(1).indices.view(1, 1)
+            q_values = self.policy_net(state)
+        max_q_value = float('-inf')
+        for action in available_actions:
+            q_value = q_values[0][action]
+            if q_value > max_q_value:
+                max_q_value = q_value
+                best_action = action
+        return torch.tensor([[best_action]], device=self.device, dtype=torch.long)
     else:
         # explore
-        return torch.tensor([[self.env.action_space.sample()]], device=self.device, dtype=torch.long)
+        selected_action = np.random.choice(available_actions)
+        return torch.tensor([[selected_action]], device=self.device, dtype=torch.long)
   
   def learn(self):
     if len(self.memory) < self.batch_size:
